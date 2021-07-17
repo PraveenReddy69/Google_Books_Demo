@@ -6,6 +6,8 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
@@ -17,10 +19,11 @@ import com.assignment.googlebooksdemo.data.api.BookService;
 import com.assignment.googlebooksdemo.data.api.RetrofitInstance;
 import com.assignment.googlebooksdemo.data.model.BooksInfo;
 import com.assignment.googlebooksdemo.data.model.Item;
- 
+import com.assignment.googlebooksdemo.data.utils.NetworkStateReceiver;
+
 
 import java.util.ArrayList;
-import java.util.Iterator;
+
 import java.util.List;
 
 import retrofit2.Call;
@@ -35,7 +38,10 @@ public class MainActivity extends AppCompatActivity {
     private NestedScrollView nestedSV;
     private ProgressBar loadingPB;
     LinearLayoutManager linearLayoutManager;
-    Context mContext = this;
+    NetworkStateReceiver connection;
+    private Context mContext = this;
+
+    boolean isNetworkAvailable = true;
     BooksAdapter booksAdapter;
 
 
@@ -48,7 +54,22 @@ public class MainActivity extends AppCompatActivity {
         rc_books = findViewById(R.id.rc_books);
         loadingPB = findViewById(R.id.idPBLoading);
         nestedSV = findViewById(R.id.idNestedSV);
-        getAllBooks("flowers", mStartIndex, mMaxLimit);
+
+
+        NetworkStateReceiver broadcastReceiver = new NetworkStateReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+
+                Bundle b = intent.getExtras();
+
+                isNetworkAvailable = b.getBoolean("network_connected");
+                getAllBooks("flowers", mStartIndex, mMaxLimit,isNetworkAvailable);
+
+            }
+        };
+
+        registerReceiver(broadcastReceiver, new IntentFilter("broadCastName"));
+
         nestedSV.setOnScrollChangeListener(new NestedScrollView.OnScrollChangeListener() {
             @Override
             public void onScrollChange(NestedScrollView v, int scrollX, int scrollY, int oldScrollX, int oldScrollY) {
@@ -58,7 +79,7 @@ public class MainActivity extends AppCompatActivity {
                     mStartIndex = mStartIndex + mMaxLimit;
                     Log.d("STARTINDEX", "onScrollChange: " + mStartIndex);
                     loadingPB.setVisibility(View.VISIBLE);
-                    getAllBooks("flowers", mStartIndex, mMaxLimit);
+                    getAllBooks("flowers", mStartIndex, mMaxLimit,isNetworkAvailable);
                 }
             }
         });
@@ -68,28 +89,63 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
-    public void getAllBooks(String type, int start_index, int max_result) {
-
-        BookService bookService = RetrofitInstance.getRetrofitInstance().create(BookService.class);
-        Call<BooksInfo> books_list = bookService.getbooks(type, start_index, max_result);
-
-        books_list.enqueue(new Callback<BooksInfo>() {
-            @Override
-            public void onResponse(Call<BooksInfo> call, Response<BooksInfo> response) {
-                if (response.isSuccessful() && response.body() != null) {
+    private List<Item> fetchResults(Response<BooksInfo> response) {
+        BooksInfo topRatedMovies = response.body();
+        return topRatedMovies.getItems();
+    }
 
 
-                    list_books.addAll(response.body().getItems());
-                    booksAdapter = new BooksAdapter(list_books, mContext);
-                    rc_books.setAdapter(booksAdapter);
-                    loadingPB.setVisibility(View.GONE);
+    public void getAllBooks(String type, int start_index, int max_result,boolean isNetworkAvailable) {
+
+
+        if (isNetworkAvailable){
+            BookService bookService = RetrofitInstance.getRetrofitInstance().create(BookService.class);
+            Call<BooksInfo> books_list = bookService.getbooks(type, start_index, max_result);
+
+            books_list.enqueue(new Callback<BooksInfo>() {
+                @Override
+                public void onResponse(Call<BooksInfo> call, Response<BooksInfo> response) {
+                    if (response.isSuccessful() && response.body() != null) {
+
+
+                        List<Item> results = fetchResults(response);
+                        loadingPB.setVisibility(View.GONE);
+
+                        booksAdapter = new BooksAdapter(list_books, mContext);
+                        booksAdapter.addAll(results);
+
+
+                        rc_books.setAdapter(booksAdapter);
+                        loadingPB.setVisibility(View.GONE);
+                    }
                 }
-            }
 
-            @Override
-            public void onFailure(Call<BooksInfo> call, Throwable t) {
-                Log.d("TAG", t.getMessage());
-            }
-        });
+                @Override
+                public void onFailure(Call<BooksInfo> call, Throwable t) {
+                    Log.d("TAG", t.getMessage());
+                }
+            });
+        }else {
+            Toast.makeText(mContext, "No Internet Connection", Toast.LENGTH_SHORT).show();
+        }
+
+    }
+
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        connection = new NetworkStateReceiver();
+        IntentFilter filter = new IntentFilter();
+        filter.addAction("android.net.conn.CONNECTIVITY_CHANGE");
+        registerReceiver(connection, filter);
+    }
+
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        connection = new NetworkStateReceiver();
+        unregisterReceiver(connection);
     }
 }
